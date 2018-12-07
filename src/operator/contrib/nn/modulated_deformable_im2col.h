@@ -50,7 +50,7 @@
  *
  * Copyright (c) 2018 Microsoft
  * Licensed under The MIT License [see LICENSE for details]
- * \file deformable_im2col.h
+ * \file modulated_deformable_im2col.h
  * \brief Function definitions of converting an image to
  * column matrix based on kernel, padding, dilation, and offset.
  * These functions are mainly used in deformable convolution operators.
@@ -58,8 +58,8 @@
  * \author Yuwen Xiong, Haozhi Qi, Jifeng Dai, Xizhou Zhu, Han Hu
  */
 
-#ifndef MXNET_OPERATOR_CONTRIB_NN_DEFORMABLE_IM2COL_H_
-#define MXNET_OPERATOR_CONTRIB_NN_DEFORMABLE_IM2COL_H_
+#ifndef MXNET_OPERATOR_CONTRIB_NN_MODULATED_DEFORMABLE_IM2COL_H_
+#define MXNET_OPERATOR_CONTRIB_NN_MODULATED_DEFORMABLE_IM2COL_H_
 
 #include <mxnet/base.h>
 #include <mxnet/operator.h>
@@ -85,8 +85,8 @@ namespace op {
  * \param data_col column buffer pointer
  */
 template <typename DType>
-inline void deformable_im2col(mshadow::Stream<cpu>* s,
-  const DType* data_im, const DType* data_offset,
+inline void modulated_deformable_im2col(mshadow::Stream<cpu>* s,
+  const DType* data_im, const DType* data_offset, const DType* data_mask,
   const TShape& im_shape, const TShape& col_shape, const TShape& kernel_shape,
   const TShape& pad, const TShape& stride, const TShape& dilation,
   const uint32_t deformable_group, DType* data_col) {
@@ -113,8 +113,8 @@ inline void deformable_im2col(mshadow::Stream<cpu>* s,
  * \param grad_im pointer of a image (C, H, W,...) in the image batch
  */
 template <typename DType>
-inline void deformable_col2im(mshadow::Stream<cpu>* s,
-  const DType* data_col, const DType* data_offset,
+inline void modulated_deformable_col2im(mshadow::Stream<cpu>* s,
+  const DType* data_col, const DType* data_offset, const DType* data_mask,
   const TShape& im_shape, const TShape& col_shape, const TShape& kernel_shape,
   const TShape& pad, const TShape& stride,
   const TShape& dilation, const uint32_t deformable_group,
@@ -140,17 +140,18 @@ inline void deformable_col2im(mshadow::Stream<cpu>* s,
  */
 
 template <typename DType>
-inline void deformable_col2im_coord(mshadow::Stream<cpu>* s,
-  const DType* data_col, const DType* data_im, const DType* data_offset, const TShape& im_shape,
-  const TShape& col_shape, const TShape& kernel_shape,
+inline void modulated_deformable_col2im_coord(mshadow::Stream<cpu>* s,
+  const DType* data_col, const DType* data_im, const DType* data_offset, const DType* data_mask,
+  const TShape& im_shape, const TShape& col_shape, const TShape& kernel_shape,
   const TShape& pad, const TShape& stride,
-  const TShape& dilation, const uint32_t deformable_group, DType* grad_offset, OpReqType req) {
+  const TShape& dilation, const uint32_t deformable_group,
+  DType* grad_offset, DType* grad_mask, OpReqType offset_req, OpReqType mask_req) {
   LOG(FATAL) << "only implemented in GPU";
 }
 
 }  // namespace op
 }  // namespace mxnet
 #ifdef __CUDACC__
-#include "./deformable_im2col.cuh"
+#include "./modulated_deformable_im2col.cuh"
 #endif
-#endif  // MXNET_OPERATOR_CONTRIB_NN_DEFORMABLE_IM2COL_H_
+#endif  // MXNET_OPERATOR_CONTRIB_NN_DEFORMABLE_MASKED_IM2COL_H_

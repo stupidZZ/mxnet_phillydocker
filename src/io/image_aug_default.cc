@@ -182,7 +182,7 @@ struct DefaultImageAugmentParam : public dmlc::Parameter<DefaultImageAugmentPara
     DMLC_DECLARE_FIELD(data_shape)
         .set_expect_ndim(3).enforce_nonzero()
         .describe("The shape of a output image.");
-    DMLC_DECLARE_FIELD(inter_method).set_default(1)
+    DMLC_DECLARE_FIELD(inter_method).set_default(2)
         .describe("The interpolation method: 0-NN 1-bilinear 2-cubic 3-area "
                   "4-lanczos4 9-auto 10-rand.");
     DMLC_DECLARE_FIELD(pad).set_default(0)

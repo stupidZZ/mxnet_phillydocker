@@ -23,10 +23,10 @@
  * Licensed under The Apache-2.0 License [see LICENSE for details]
  * \file multi_proposal-inl.h
  * \brief MultiProposal Operator
- * \author Piotr Teterwak, Bing Xu, Jian Guo, Xizhou Zhu
+ * \author Piotr Teterwak, Bing Xu, Jian Guo, Xizhou Zhu, Han Hu
 */
-#ifndef MXNET_OPERATOR_CONTRIB_MULTI_PROPOSAL_INL_H_
-#define MXNET_OPERATOR_CONTRIB_MULTI_PROPOSAL_INL_H_
+#ifndef MXNET_OPERATOR_CONTRIB_MULTI_PYRAMID_PROPOSAL_INL_H_
+#define MXNET_OPERATOR_CONTRIB_MULTI_PYRAMID_PROPOSAL_INL_H_
 
 #include <dmlc/logging.h>
 #include <dmlc/parameter.h>
@@ -46,24 +46,24 @@ namespace mxnet {
 namespace op {
 
 namespace proposal {
-enum MultiProposalOpInputs {kClsProb, kBBoxPred, kImInfo};
-enum MultiProposalOpOutputs {kOut, kScore};
-enum MultiProposalForwardResource {kTempResource};
+enum MultiPyramidProposalOpInputs {kImInfo, kClsProbStride4, kBBoxPredStride4, kClsProbStride8, kBBoxPredStride8, kClsProbStride16, kBBoxPredStride16, kClsProbStride32, kBBoxPredStride32, kClsProbStride64, kBBoxPredStride64};
+enum MultiPyramidProposalOpOutputs {kOut, kScore};
+enum MultiPyramidProposalForwardResource {kTempResource};
 }  // proposal
 
-struct MultiProposalParam : public dmlc::Parameter<MultiProposalParam> {
+struct MultiPyramidProposalParam : public dmlc::Parameter<MultiPyramidProposalParam> {
   int rpn_pre_nms_top_n;
   int rpn_post_nms_top_n;
   float threshold;
   int rpn_min_size;
   nnvm::Tuple<float> scales;
   nnvm::Tuple<float> ratios;
-  int feature_stride;
+  nnvm::Tuple<int> feature_stride;
   bool output_score;
   bool iou_loss;
-  bool left_top_alignment;
-  DMLC_DECLARE_PARAMETER(MultiProposalParam) {
+  DMLC_DECLARE_PARAMETER(MultiPyramidProposalParam) {
     float tmp[] = {0, 0, 0, 0};
+    int tmp_int[] = {0, 0, 0, 0, 0};
     DMLC_DECLARE_FIELD(rpn_pre_nms_top_n).set_default(6000)
     .describe("Number of top scoring boxes to keep after applying NMS to RPN proposals");
     DMLC_DECLARE_FIELD(rpn_post_nms_top_n).set_default(300)
@@ -79,23 +79,22 @@ struct MultiProposalParam : public dmlc::Parameter<MultiProposalParam> {
     tmp[0] = 0.5f; tmp[1] = 1.0f; tmp[2] = 2.0f;
     DMLC_DECLARE_FIELD(ratios).set_default(nnvm::Tuple<float>(tmp, tmp + 3))
     .describe("Used to generate anchor windows by enumerating ratios");
-    DMLC_DECLARE_FIELD(feature_stride).set_default(16)
+    tmp_int[0] = 4; tmp_int[1] = 8; tmp_int[2] = 16; tmp_int[3] = 32; tmp_int[4] = 64;
+    DMLC_DECLARE_FIELD(feature_stride).set_default(nnvm::Tuple<int>(tmp_int, tmp_int + 5))
     .describe("The size of the receptive field each unit in the convolution layer of the rpn,"
               "for example the product of all stride's prior to this layer.");
     DMLC_DECLARE_FIELD(output_score).set_default(false)
     .describe("Add score to outputs");
     DMLC_DECLARE_FIELD(iou_loss).set_default(false)
     .describe("Usage of IoU Loss");
-    DMLC_DECLARE_FIELD(left_top_alignment).set_default(false)
-    .describe("Whether do left top alignment when generating anchors");
   }
 };
 
 template<typename xpu>
-Operator *CreateOp(MultiProposalParam param);
+Operator *CreateOp(MultiPyramidProposalParam param);
 
 #if DMLC_USE_CXX11
-class MultiProposalProp : public OperatorProperty {
+class MultiPyramidProposalProp : public OperatorProperty {
  public:
   void Init(const std::vector<std::pair<std::string, std::string> >& kwargs) override {
     param_.Init(kwargs);
@@ -109,12 +108,12 @@ class MultiProposalProp : public OperatorProperty {
                   std::vector<TShape> *out_shape,
                   std::vector<TShape> *aux_shape) const override {
     using namespace mshadow;
-    CHECK_EQ(in_shape->size(), 3) << "Input:[cls_prob, bbox_pred, im_info]";
-    const TShape &dshape = in_shape->at(proposal::kClsProb);
+    CHECK_EQ(in_shape->size(), param_.feature_stride.ndim() * 2 + 1) << "Input:[cls_prob, bbox_pred, im_info]";
+    const TShape &dshape = in_shape->at(proposal::kClsProbStride4);
     if (dshape.ndim() == 0) return false;
     Shape<4> bbox_pred_shape;
     bbox_pred_shape = Shape4(dshape[0], dshape[1] * 2, dshape[2], dshape[3]);
-    SHAPE_ASSIGN_CHECK(*in_shape, proposal::kBBoxPred,
+    SHAPE_ASSIGN_CHECK(*in_shape, proposal::kBBoxPredStride4,
                        bbox_pred_shape);
     Shape<2> im_info_shape;
     im_info_shape = Shape2(dshape[0], 3);
@@ -128,13 +127,13 @@ class MultiProposalProp : public OperatorProperty {
   }
 
   OperatorProperty* Copy() const override {
-    auto ptr = new MultiProposalProp();
+    auto ptr = new MultiPyramidProposalProp();
     ptr->param_ = param_;
     return ptr;
   }
 
   std::string TypeString() const override {
-    return "_contrib_MultiProposal";
+    return "_contrib_MultiPyramidProposal";
   }
 
   std::vector<ResourceRequest> ForwardResource(
@@ -162,7 +161,16 @@ class MultiProposalProp : public OperatorProperty {
   }
 
   std::vector<std::string> ListArguments() const override {
-    return {"cls_prob", "bbox_pred", "im_info"};
+    std::vector<std::string> args;
+    std::string s = "im_info";
+    args.push_back(s);
+    for (int i = 0; i < param_.feature_stride.ndim(); ++i){
+        std::string s = "rpn_cls_prob_stride" + std::to_string(param_.feature_stride[i]);
+        args.push_back(s);
+        std::string s2 = "rpn_bbox_pred_stride" + std::to_string(param_.feature_stride[i]);
+        args.push_back(s2);
+    }
+    return args;
   }
 
   std::vector<std::string> ListOutputs() const override {
@@ -172,7 +180,7 @@ class MultiProposalProp : public OperatorProperty {
   Operator* CreateOperator(Context ctx) const override;
 
  private:
-  MultiProposalParam param_;
+  MultiPyramidProposalParam param_;
 };  // class MultiProposalProp
 
 #endif  // DMLC_USE_CXX11
