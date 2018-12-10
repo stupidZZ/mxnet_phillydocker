@@ -24,8 +24,8 @@
 * \brief deformable psroi pooling operator and symbol
 * \author Yi Li, Guodong Zhang, Jifeng Dai
 */
-#ifndef MXNET_OPERATOR_CONTRIB_DEFORMABLE_PSROI_POOLING_INL_H_
-#define MXNET_OPERATOR_CONTRIB_DEFORMABLE_PSROI_POOLING_INL_H_
+#ifndef MXNET_OPERATOR_CONTRIB_DEFORMABLE_PSROI_POOLING_V2_INL_H_
+#define MXNET_OPERATOR_CONTRIB_DEFORMABLE_PSROI_POOLING_V2_INL_H_
 
 #include <dmlc/logging.h>
 #include <dmlc/parameter.h>
@@ -43,14 +43,13 @@ namespace op {
 
   // Declare enumeration of input order to make code more intuitive.
   // These enums are only visible within this header
-namespace deformablepsroipool {
-  enum DeformablePSROIPoolingOpInputs { kData, kBox, kTrans };
-  enum DeformablePSROIPoolingOpOutputs { kOut, kTopCount };
-}  // deformablepsroipool
+namespace deformablepsroipoolv2 {
+  enum DeformablePSROIPoolingv2OpInputs { kData, kBox, kTrans };
+  enum DeformablePSROIPoolingv2OpOutputs { kOut, kTopCount };
+}  // deformablepsroipoolv2
 
-struct DeformablePSROIPoolingParam : public dmlc::Parameter<DeformablePSROIPoolingParam> {
-  // TShape pooled_size;
-  float spatial_scale;
+struct DeformablePSROIPoolingv2Param : public dmlc::Parameter<DeformablePSROIPoolingv2Param> {
+  nnvm::Tuple<float> spatial_scale;
   int output_dim;
   int group_size;
   int pooled_size;
@@ -58,8 +57,13 @@ struct DeformablePSROIPoolingParam : public dmlc::Parameter<DeformablePSROIPooli
   int sample_per_part;
   float trans_std;
   bool no_trans;
-  DMLC_DECLARE_PARAMETER(DeformablePSROIPoolingParam) {
-    DMLC_DECLARE_FIELD(spatial_scale).set_range(0.0, 1.0)
+  int num_args;
+  int num_stage;
+  DMLC_DECLARE_PARAMETER(DeformablePSROIPoolingv2Param) {
+    DMLC_DECLARE_FIELD(num_args).set_lower_bound(1)
+      .describe("Number of inputs to be roi_pooled.");
+    float tmp[] = {0.0625};
+    DMLC_DECLARE_FIELD(spatial_scale).set_default(nnvm::Tuple<float>(tmp, tmp + 1))
       .describe("Ratio of input feature map height (or w) to raw image height (or w). "
         "Equals the reciprocal of total stride in convolutional layers");
     DMLC_DECLARE_FIELD(output_dim).describe("fix output dim");
@@ -71,13 +75,15 @@ struct DeformablePSROIPoolingParam : public dmlc::Parameter<DeformablePSROIPooli
       .describe("fix transition std");
     DMLC_DECLARE_FIELD(no_trans).set_default(false)
       .describe("Whether to disable trans parameter.");
+    //DMLC_DECLARE_FIELD(num_stage).set_range(1, 10000)
+    //  .describe("num stage");
   }
 };
 
 template<typename xpu, typename DType>
-class DeformablePSROIPoolingOp : public Operator {
+class DeformablePSROIPoolingv2Op : public Operator {
  public:
-  explicit DeformablePSROIPoolingOp(DeformablePSROIPoolingParam p) {
+  explicit DeformablePSROIPoolingv2Op(DeformablePSROIPoolingv2Param p) {
     this->param_ = p;
   }
 
@@ -87,22 +93,26 @@ class DeformablePSROIPoolingOp : public Operator {
     const std::vector<TBlob> &out_data,
     const std::vector<TBlob> &aux_args) {
     using namespace mshadow;
-    size_t in_expected = param_.no_trans? 2 : 3;
+    size_t in_expected = param_.num_stage + (param_.no_trans? 1 : 2);
     size_t out_expected = 2;
     CHECK_EQ(in_data.size(), in_expected);
     CHECK_EQ(out_data.size(), out_expected);
-    CHECK_EQ(out_data[deformablepsroipool::kOut].shape_[0],
-             in_data[deformablepsroipool::kBox].shape_[0]);
-    CHECK_EQ(out_data[deformablepsroipool::kTopCount].shape_[0],
-             in_data[deformablepsroipool::kBox].shape_[0]);
+    CHECK_EQ(out_data[deformablepsroipoolv2::kOut].shape_[0],
+             in_data[param_.num_stage - 1 + deformablepsroipoolv2::kBox].shape_[0]);
+    CHECK_EQ(out_data[deformablepsroipoolv2::kTopCount].shape_[0],
+             in_data[param_.num_stage - 1 + deformablepsroipoolv2::kBox].shape_[0]);
     Stream<xpu> *s = ctx.get_stream<xpu>();
 
-    Tensor<xpu, 4, DType> data = in_data[deformablepsroipool::kData].get<xpu, 4, DType>(s);
-    Tensor<xpu, 2, DType> bbox = in_data[deformablepsroipool::kBox].get<xpu, 2, DType>(s);
-    Tensor<xpu, 4, DType> out = out_data[deformablepsroipool::kOut].get<xpu, 4, DType>(s);
-    Tensor<xpu, 4, DType> top_count = out_data[deformablepsroipool::kTopCount]
+    std::vector<Tensor<xpu, 4, DType>> datas;
+    for (int i = 0; i < param_.num_stage; ++i) {
+        Tensor<xpu, 4, DType> data = in_data[i].get<xpu, 4, DType>(s);
+        CHECK_EQ(data.CheckContiguous(), true);
+        datas.push_back(data);
+    }
+    Tensor<xpu, 2, DType> bbox = in_data[param_.num_stage - 1 + deformablepsroipoolv2::kBox].get<xpu, 2, DType>(s);
+    Tensor<xpu, 4, DType> out = out_data[deformablepsroipoolv2::kOut].get<xpu, 4, DType>(s);
+    Tensor<xpu, 4, DType> top_count = out_data[deformablepsroipoolv2::kTopCount]
                                         .get<xpu, 4, DType>(s);
-    CHECK_EQ(data.CheckContiguous(), true);
     CHECK_EQ(bbox.CheckContiguous(), true);
     CHECK_EQ(out.CheckContiguous(), true);
     CHECK_EQ(top_count.CheckContiguous(), true);
@@ -111,9 +121,9 @@ class DeformablePSROIPoolingOp : public Operator {
 
     Tensor<xpu, 4, DType> trans;
     if (!param_.no_trans) {
-      trans = in_data[deformablepsroipool::kTrans].get<xpu, 4, DType>(s);
+      trans = in_data[param_.num_stage - 1 + deformablepsroipoolv2::kTrans].get<xpu, 4, DType>(s);
     }
-    DeformablePSROIPoolForward(out, data, bbox, trans, top_count, param_.no_trans,
+    DeformablePSROIPoolv2Forward(out, datas, bbox, trans, top_count, param_.no_trans,
       param_.spatial_scale, param_.output_dim, param_.group_size, param_.pooled_size,
       param_.part_size, param_.sample_per_part, param_.trans_std);
   }
@@ -126,69 +136,91 @@ class DeformablePSROIPoolingOp : public Operator {
     const std::vector<TBlob> &in_grad,
     const std::vector<TBlob> &aux_args) {
     using namespace mshadow;
-    size_t in_expected = param_.no_trans ? 2 : 3;
+    size_t in_expected = param_.num_stage + (param_.no_trans? 1 : 2);
     size_t out_expected = 2;
     CHECK_EQ(in_data.size(), in_expected);
     CHECK_EQ(out_data.size(), out_expected);
-    CHECK_EQ(out_grad[deformablepsroipool::kOut].shape_[0],
-             in_data[deformablepsroipool::kBox].shape_[0]);
-    CHECK_EQ(out_data[deformablepsroipool::kTopCount].shape_[0],
-             in_data[deformablepsroipool::kBox].shape_[0]);
-    CHECK_NE(req[deformablepsroipool::kData], kWriteInplace) <<
-      "DeformablePSROIPooling: Backward doesn't support kWriteInplace.";
-    CHECK_NE(req[deformablepsroipool::kBox], kWriteInplace) <<
-      "DeformablePSROIPooling: Backward doesn't support kWriteInplace.";
-    // CHECK_NE(req[deformablepsroipool::kTrans], kWriteInplace) <<
-    //  "DeformablePSROIPooling: Backward doesn't support kWriteInplace.";
+    CHECK_EQ(out_grad[deformablepsroipoolv2::kOut].shape_[0],
+             in_data[param_.num_stage - 1 + deformablepsroipoolv2::kBox].shape_[0]);
+    CHECK_EQ(out_data[deformablepsroipoolv2::kTopCount].shape_[0],
+             in_data[param_.num_stage - 1 + deformablepsroipoolv2::kBox].shape_[0]);
+    for (int i = 0; i < param_.num_stage; ++i) {
+      CHECK_NE(req[i], kWriteInplace) <<
+      "DeformablePSROIPoolingv2: Backward doesn't support kWriteInplace.";
+    }
+    CHECK_NE(req[param_.num_stage - 1 + deformablepsroipoolv2::kBox], kWriteInplace) <<
+      "DeformablePSROIPoolingv2: Backward doesn't support kWriteInplace.";
+    // CHECK_NE(req[param_.num_stage - 1 + deformablepsroipoolv2::kTrans], kWriteInplace) <<
+    //  "DeformablePSROIPoolingv2: Backward doesn't support kWriteInplace.";
     Stream<xpu> *s = ctx.get_stream<xpu>();
 
-    Tensor<xpu, 4, DType> grad_out = out_grad[deformablepsroipool::kOut].get<xpu, 4, DType>(s);
-    Tensor<xpu, 4, DType> data = in_data[deformablepsroipool::kData].get<xpu, 4, DType>(s);
-    Tensor<xpu, 2, DType> bbox = in_data[deformablepsroipool::kBox].get<xpu, 2, DType>(s);
-    Tensor<xpu, 4, DType> top_count = out_data[deformablepsroipool::kTopCount]
-                                        .get<xpu, 4, DType>(s);
-    Tensor<xpu, 4, DType> grad_in = in_grad[deformablepsroipool::kData].get<xpu, 4, DType>(s);
-    Tensor<xpu, 2, DType> grad_roi = in_grad[deformablepsroipool::kBox].get<xpu, 2, DType>(s);
+    Tensor<xpu, 4, DType> grad_out = out_grad[deformablepsroipoolv2::kOut].get<xpu, 4, DType>(s);
+    std::vector<Tensor<xpu, 4, DType>> datas;
+    for (int i = 0; i < param_.num_stage; ++i) {
+        Tensor<xpu, 4, DType> data = in_data[i].get<xpu, 4, DType>(s);
+        CHECK_EQ(data.CheckContiguous(), true);
+        datas.push_back(data);
+    }
+    Tensor<xpu, 2, DType> bbox = in_data[param_.num_stage - 1 + deformablepsroipoolv2::kBox].get<xpu, 2, DType>(s);
+    Tensor<xpu, 4, DType> top_count = out_data[deformablepsroipoolv2::kTopCount]
+                                        .get<xpu, 4, DType>(s);                                    
+    std::vector<Tensor<xpu, 4, DType>> grad_ins;
+    for (int i = 0; i < param_.num_stage; ++i) {
+        Tensor<xpu, 4, DType> grad_in = in_grad[i].get<xpu, 4, DType>(s);
+        CHECK_EQ(grad_in.CheckContiguous(), true);
+        Assign(grad_in, req[i], 0);
+        grad_ins.push_back(grad_in);
+    }
+    Tensor<xpu, 2, DType> grad_roi = in_grad[param_.num_stage - 1 + deformablepsroipoolv2::kBox].get<xpu, 2, DType>(s);
     Tensor<xpu, 4, DType> grad_trans;
     Tensor<xpu, 4, DType> trans;
     if (!param_.no_trans) {
-      CHECK_EQ(in_grad.size(), 3);
-      trans = in_data[deformablepsroipool::kTrans].get<xpu, 4, DType>(s);
-      grad_trans = in_grad[deformablepsroipool::kTrans].get<xpu, 4, DType>(s);
+      CHECK_EQ(in_grad.size(), in_expected);
+      trans = in_data[param_.num_stage - 1 + deformablepsroipoolv2::kTrans].get<xpu, 4, DType>(s);
+      grad_trans = in_grad[param_.num_stage - 1 + deformablepsroipoolv2::kTrans].get<xpu, 4, DType>(s);
     }
 
     CHECK_EQ(grad_out.CheckContiguous(), true);
-    CHECK_EQ(data.CheckContiguous(), true);
     CHECK_EQ(bbox.CheckContiguous(), true);
     CHECK_EQ(top_count.CheckContiguous(), true);
-    CHECK_EQ(grad_in.CheckContiguous(), true);
 
-    Assign(grad_in, req[deformablepsroipool::kData], 0);
+    
     if (!param_.no_trans) {
-      Assign(grad_trans, req[deformablepsroipool::kTrans], 0);
+      Assign(grad_trans, req[param_.num_stage - 1 + deformablepsroipoolv2::kTrans], 0);
     }
-    DeformablePSROIPoolBackwardAcc(grad_in, grad_trans, grad_out, data, bbox, trans,
+    DeformablePSROIPoolv2BackwardAcc(grad_ins, grad_trans, grad_out, datas, bbox, trans,
       top_count, param_.no_trans, param_.spatial_scale, param_.output_dim, param_.group_size,
       param_.pooled_size, param_.part_size, param_.sample_per_part, param_.trans_std);
-    Assign(grad_roi, req[deformablepsroipool::kBox], 0);
+    Assign(grad_roi, req[param_.num_stage - 1 + deformablepsroipoolv2::kBox], 0);
   }
 
  private:
-  DeformablePSROIPoolingParam param_;
-};  // class DeformablePSROIPoolingOp
+  DeformablePSROIPoolingv2Param param_;
+};  // class DeformablePSROIPoolingv2Op
 
 // Decalre Factory function, used for dispatch specialization
 template<typename xpu>
-Operator* CreateOp(DeformablePSROIPoolingParam param, int dtype);
+Operator* CreateOp(DeformablePSROIPoolingv2Param param, int dtype);
 
 #if DMLC_USE_CXX11
-class DeformablePSROIPoolingProp : public OperatorProperty {
+class DeformablePSROIPoolingv2Prop : public OperatorProperty {
  public:
   std::vector<std::string> ListArguments() const override {
     if (param_.no_trans) {
-      return{ "data", "rois" };
+      std::vector<std::string> ret;
+      for (int i = 0; i < param_.num_stage; ++i) {
+        ret.push_back(std::string("data") + std::to_string(i));
+      }
+      ret.push_back("rois");
+      return ret;
     } else {
-      return{ "data", "rois", "trans" };
+      std::vector<std::string> ret;
+      for (int i = 0; i < param_.num_stage; ++i) {
+        ret.push_back(std::string("data") + std::to_string(i));
+      }
+      ret.push_back("rois");
+      ret.push_back("trans");
+      return ret;
     }
   }
 
@@ -209,6 +241,12 @@ class DeformablePSROIPoolingProp : public OperatorProperty {
     if (param_.part_size == 0) {
       param_.part_size = param_.pooled_size;
     }
+    printf("dpool num_args: %d\n", param_.num_args);
+    if (param_.no_trans) {
+      param_.num_stage = param_.num_args - 1;
+    } else {
+      param_.num_stage = param_.num_args - 2; 
+    }
   }
 
   std::map<std::string, std::string> GetParams() const override {
@@ -220,22 +258,24 @@ class DeformablePSROIPoolingProp : public OperatorProperty {
     std::vector<TShape> *aux_shape) const override {
     using namespace mshadow;
     if (param_.no_trans) {
-      CHECK_EQ(in_shape->size(), 2) << "Input:[data, rois]";
+      CHECK_EQ(in_shape->size(), param_.num_stage + 1) << "Input:[data, rois]";
     } else {
-      CHECK_EQ(in_shape->size(), 3) << "Input:[data, rois, trans]";
+      CHECK_EQ(in_shape->size(), param_.num_stage + 2) << "Input:[data, rois, trans]";
       // trans: [num_rois, 2, pooled_h, pooled_w]
-      TShape tshape = in_shape->at(deformablepsroipool::kTrans);
+      TShape tshape = in_shape->at(param_.num_stage - 1 + deformablepsroipoolv2::kTrans);
       CHECK_EQ(tshape.ndim(), 4) << "trans should be a 4D tensor of shape";
     }
 
     // data: [batch_size, c, h, w]
-    TShape dshape = in_shape->at(deformablepsroipool::kData);
-    CHECK_EQ(dshape.ndim(), 4) << "data should be a 4D tensor";
+    for (int i = 0; i < param_.num_stage; ++i) {
+      TShape dshape = in_shape->at(i);
+      CHECK_EQ(dshape.ndim(), 4) << "data should be a 4D tensor";
+    }
 
-    // bbox: [num_rois, 5]
-    TShape bshape = in_shape->at(deformablepsroipool::kBox);
-    CHECK_EQ(bshape.ndim(), 2) << "bbox should be a 2D tensor of shape [batch, 5]";
-    CHECK_EQ(bshape[1], 5) << "bbox should be a 2D tensor of shape [batch, 5]";
+    // bbox: [num_rois, 6]
+    TShape bshape = in_shape->at(param_.num_stage - 1 + deformablepsroipoolv2::kBox);
+    CHECK_EQ(bshape.ndim(), 2) << "bbox should be a 2D tensor of shape [batch, 6]";
+    CHECK_EQ(bshape[1], 6) << "bbox should be a 2D tensor of shape [batch, 6]";
 
     // out: [num_rois, c, pooled_h, pooled_w]
     // top_count: [num_rois, c, pooled_h, pooled_w]
@@ -262,13 +302,13 @@ class DeformablePSROIPoolingProp : public OperatorProperty {
   }
 
   OperatorProperty* Copy() const override {
-    DeformablePSROIPoolingProp* deformable_psroi_pooling_sym = new DeformablePSROIPoolingProp();
+    DeformablePSROIPoolingv2Prop* deformable_psroi_pooling_sym = new DeformablePSROIPoolingv2Prop();
     deformable_psroi_pooling_sym->param_ = this->param_;
     return deformable_psroi_pooling_sym;
   }
 
   std::string TypeString() const override {
-    return "_contrib_DeformablePSROIPooling";
+    return "_contrib_DeformablePSROIPoolingv2";
   }
 
   // decalre dependency and inplace optimization options
@@ -277,12 +317,24 @@ class DeformablePSROIPoolingProp : public OperatorProperty {
     const std::vector<int> &in_data,
     const std::vector<int> &out_data) const override {
     if (param_.no_trans) {
-      return{ out_grad[deformablepsroipool::kOut], in_data[deformablepsroipool::kData],
-              in_data[deformablepsroipool::kBox], out_data[deformablepsroipool::kTopCount] };
+      std::vector<int> deps;
+      for (int i = 0; i < param_.num_stage; ++i) {
+        deps.push_back(in_data[i]);
+      }
+      deps.push_back(in_data[param_.num_stage - 1 + deformablepsroipoolv2::kBox]);
+      deps.push_back(out_grad[deformablepsroipoolv2::kOut]);
+      deps.push_back(out_data[deformablepsroipoolv2::kTopCount]);
+      return deps;
     } else {
-      return{ out_grad[deformablepsroipool::kOut], in_data[deformablepsroipool::kData],
-              in_data[deformablepsroipool::kBox], in_data[deformablepsroipool::kTrans],
-              out_data[deformablepsroipool::kTopCount] };
+      std::vector<int> deps;
+      for (int i = 0; i < param_.num_stage; ++i) {
+        deps.push_back(in_data[i]);
+      }
+      deps.push_back(in_data[param_.num_stage - 1 + deformablepsroipoolv2::kBox]);
+      deps.push_back(in_data[param_.num_stage - 1 + deformablepsroipoolv2::kTrans]);
+      deps.push_back(out_grad[deformablepsroipoolv2::kOut]);
+      deps.push_back(out_data[deformablepsroipoolv2::kTopCount]);
+      return deps;
     }
   }
 
@@ -297,9 +349,9 @@ class DeformablePSROIPoolingProp : public OperatorProperty {
 
 
  private:
-  DeformablePSROIPoolingParam param_;
-};  // class DeformablePSROIPoolingProp
+  DeformablePSROIPoolingv2Param param_;
+};  // class DeformablePSROIPoolingv2Prop
 #endif
 }  // namespace op
 }  // namespace mxnet
-#endif  // MXNET_OPERATOR_CONTRIB_DEFORMABLE_PSROI_POOLING_INL_H_
+#endif  // MXNET_OPERATOR_CONTRIB_DEFORMABLE_PSROI_POOLING_V2_INL_H_
