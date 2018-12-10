@@ -20,21 +20,21 @@
 /*!
  * Copyright (c) 2017 Microsoft
  * Licensed under The Apache-2.0 License [see LICENSE for details]
- * \file multi_proposal.cc
+ * \file multi_pyramid_proposal.cc
  * \brief
- * \author Xizhou Zhu
+ * \author Xizhou Zhu, Han Hu
 */
 
-#include "./multi_proposal-inl.h"
+#include "./multi_pyramid_proposal-inl.h"
 
 
 namespace mxnet {
 namespace op {
 
-template<typename xpu, typename DType>
-class MultiProposalOp : public Operator{
+template<typename xpu, typename Dtype>
+class MultiPyramidProposalOp : public Operator{
  public:
-  explicit MultiProposalOp(MultiProposalParam param) {
+  explicit MultiPyramidProposalOp(MultiPyramidProposalParam param) {
     this->param_ = param;
   }
 
@@ -57,19 +57,19 @@ class MultiProposalOp : public Operator{
   }
 
  private:
-  MultiProposalParam param_;
+  MultiPyramidProposalParam param_;
 };  // class MultiProposalOp
 
 template<>
-Operator *CreateOp<cpu>(MultiProposalParam param, int dtype) {
+Operator *CreateOp<cpu>(MultiPyramidProposalParam param, int dtype) {
   Operator *op = NULL;
   MSHADOW_REAL_TYPE_SWITCH(dtype, DType, {
-    op = new MultiProposalOp<cpu, DType>(param);
+    op = new MultiPyramidProposalOp<cpu, DType>(param);
   });
   return op;
 }
 
-Operator* MultiProposalProp::CreateOperatorEx(Context ctx,
+Operator* MultiPyramidProposalProp::CreateOperatorEx(Context ctx,
                                                   std::vector<TShape> *in_shape,
                                                   std::vector<int> *in_type) const {
   std::vector<TShape> out_shape, aux_shape;
@@ -79,14 +79,22 @@ Operator* MultiProposalProp::CreateOperatorEx(Context ctx,
   DO_BIND_DISPATCH(CreateOp, param_, in_type->at(0));
 }
 
-DMLC_REGISTER_PARAMETER(MultiProposalParam);
+DMLC_REGISTER_PARAMETER(MultiPyramidProposalParam);
 
-MXNET_REGISTER_OP_PROPERTY(_contrib_MultiProposal, MultiProposalProp)
-.describe("Generate region proposals via RPN")
-.add_argument("cls_prob", "NDArray-or-Symbol", "Score of how likely proposal is object.")
-.add_argument("bbox_pred", "NDArray-or-Symbol", "BBox Predicted deltas from anchors for proposals")
+MXNET_REGISTER_OP_PROPERTY(_contrib_MultiPyramidProposal, MultiPyramidProposalProp)
+.describe("Generate pyramid region proposals via FPN RPN")
 .add_argument("im_info", "NDArray-or-Symbol", "Image size and scale.")
-.add_arguments(MultiProposalParam::__FIELDS__());
+.add_argument("rpn_cls_prob_stride4", "NDArray-or-Symbol", "Score of how likely proposal is object on stride 4 feature map.")
+.add_argument("rpn_bbox_pred_stride4", "NDArray-or-Symbol", "BBox Predicted deltas from anchors for proposals on stride 4 feature map")
+.add_argument("rpn_cls_prob_stride8", "NDArray-or-Symbol", "Score of how likely proposal is object on stride 8 feature map.")
+.add_argument("rpn_bbox_pred_stride8", "NDArray-or-Symbol", "BBox Predicted deltas from anchors for proposals on stride 8 feature map")
+.add_argument("rpn_cls_prob_stride16", "NDArray-or-Symbol", "Score of how likely proposal is object on stride 16 feature map.")
+.add_argument("rpn_bbox_pred_stride16", "NDArray-or-Symbol", "BBox Predicted deltas from anchors for proposals on stride 16 feature map")
+.add_argument("rpn_cls_prob_stride32", "NDArray-or-Symbol", "Score of how likely proposal is object on stride 32 feature map.")
+.add_argument("rpn_bbox_pred_stride32", "NDArray-or-Symbol", "BBox Predicted deltas from anchors for proposals on stride 32 feature map")
+.add_argument("rpn_cls_prob_stride64", "NDArray-or-Symbol", "Score of how likely proposal is object on stride 64 feature map.")
+.add_argument("rpn_bbox_pred_stride64", "NDArray-or-Symbol", "BBox Predicted deltas from anchors for proposals on stride 64 feature map")
+.add_arguments(MultiPyramidProposalParam::__FIELDS__());
 
 }  // namespace op
 }  // namespace mxnet
