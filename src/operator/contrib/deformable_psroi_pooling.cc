@@ -24,7 +24,7 @@
  * \brief
  * \author Yi Li, Guodong Zhang, Jifeng Dai
 */
-#include "./deformable_psroi_pooling_v2-inl.h"
+#include "./deformable_psroi_pooling-inl.h"
 #include <mshadow/base.h>
 #include <mshadow/tensor.h>
 #include <mshadow/packet-inl.h>
@@ -38,7 +38,7 @@ using std::ceil;
 
 namespace mshadow {
   template<typename DType>
-  inline void DeformablePSROIPoolv2Forward(const Tensor<cpu, 4, DType> &out,
+  inline void DeformablePSROIPoolForward(const Tensor<cpu, 4, DType> &out,
     const std::vector<Tensor<cpu, 4, DType>> &datas,
     const Tensor<cpu, 2, DType> &bbox,
     const Tensor<cpu, 4, DType> &trans,
@@ -56,7 +56,7 @@ namespace mshadow {
   }
 
   template<typename DType>
-  inline void DeformablePSROIPoolv2BackwardAcc(const std::vector<Tensor<cpu, 4, DType>> &in_grads,
+  inline void DeformablePSROIPoolBackwardAcc(const std::vector<Tensor<cpu, 4, DType>> &in_grads,
     const Tensor<cpu, 4, DType> &trans_grad,
     const Tensor<cpu, 4, DType> &out_grad,
     const std::vector<Tensor<cpu, 4, DType>> &datas,
@@ -80,15 +80,15 @@ namespace mxnet {
 namespace op {
 
   template<>
-  Operator *CreateOp<cpu>(DeformablePSROIPoolingv2Param param, int dtype) {
+  Operator *CreateOp<cpu>(DeformablePSROIPoolingParam param, int dtype) {
     Operator* op = nullptr;
     MSHADOW_REAL_TYPE_SWITCH(dtype, DType, {
-      op = new DeformablePSROIPoolingv2Op<cpu, DType>(param);
+      op = new DeformablePSROIPoolingOp<cpu, DType>(param);
     });
     return op;
   }
 
-  Operator *DeformablePSROIPoolingv2Prop::CreateOperatorEx(
+  Operator *DeformablePSROIPoolingProp::CreateOperatorEx(
     Context ctx, std::vector<TShape> *in_shape,
     std::vector<int> *in_type) const {
     std::vector<TShape> out_shape, aux_shape;
@@ -98,14 +98,14 @@ namespace op {
     DO_BIND_DISPATCH(CreateOp, param_, in_type->at(0));
   }
 
-  DMLC_REGISTER_PARAMETER(DeformablePSROIPoolingv2Param);
+  DMLC_REGISTER_PARAMETER(DeformablePSROIPoolingParam);
 
-  MXNET_REGISTER_OP_PROPERTY(_contrib_DeformablePSROIPoolingv2, DeformablePSROIPoolingv2Prop)
+  MXNET_REGISTER_OP_PROPERTY(_contrib_DeformablePSROIPooling, DeformablePSROIPoolingProp)
     .describe("Performs deformable position-sensitive region-of-interest pooling on inputs.\n"
-      "The DeformablePSROIPoolingv2 operation is described in https://arxiv.org/abs/1703.06211 ."
-      "batch_size will change to the number of region bounding boxes after DeformablePSROIPoolingv2")
+      "The DeformablePSROIPooling operation is described in https://arxiv.org/abs/1703.06211 ."
+      "batch_size will change to the number of region bounding boxes after DeformablePSROIPooling")
     .add_argument("data", "NDArray-or-Symbol[]", "Input data[], rois, trans to the pooling operator")
-    .add_arguments(DeformablePSROIPoolingv2Param::__FIELDS__())
+    .add_arguments(DeformablePSROIPoolingParam::__FIELDS__())
     .set_key_var_num_args("num_args");
 }  // namespace op
 }  // namespace mxnet

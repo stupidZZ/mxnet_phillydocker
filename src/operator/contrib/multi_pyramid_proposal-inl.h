@@ -25,8 +25,8 @@
  * \brief MultiProposal Operator
  * \author Piotr Teterwak, Bing Xu, Jian Guo, Xizhou Zhu, Han Hu
 */
-#ifndef MXNET_OPERATOR_CONTRIB_MULTI_PYRAMID_PROPOSAL_V2_INL_H_
-#define MXNET_OPERATOR_CONTRIB_MULTI_PYRAMID_PROPOSAL_V2_INL_H_
+#ifndef MXNET_OPERATOR_CONTRIB_MULTI_PYRAMID_PROPOSAL_INL_H_
+#define MXNET_OPERATOR_CONTRIB_MULTI_PYRAMID_PROPOSAL_INL_H_
 
 #include <dmlc/logging.h>
 #include <dmlc/parameter.h>
@@ -46,12 +46,12 @@ namespace mxnet {
 namespace op {
 
 namespace proposal {
-enum MultiPyramidProposalV2OpInputs {kImInfo, kClsProbStride4, kBBoxPredStride4, kClsProbStride8, kBBoxPredStride8, kClsProbStride16, kBBoxPredStride16, kClsProbStride32, kBBoxPredStride32, kClsProbStride64, kBBoxPredStride64};
-enum MultiPyramidProposalV2OpOutputs {kOut, kScore};
-enum MultiPyramidProposalV2ForwardResource {kTempResource};
+enum MultiPyramidProposalOpInputs {kImInfo, kClsProbStride4, kBBoxPredStride4, kClsProbStride8, kBBoxPredStride8, kClsProbStride16, kBBoxPredStride16, kClsProbStride32, kBBoxPredStride32, kClsProbStride64, kBBoxPredStride64};
+enum MultiPyramidProposalOpOutputs {kOut, kScore};
+enum MultiPyramidProposalForwardResource {kTempResource};
 }  // proposal
 
-struct MultiPyramidProposalV2Param : public dmlc::Parameter<MultiPyramidProposalV2Param> {
+struct MultiPyramidProposalParam : public dmlc::Parameter<MultiPyramidProposalParam> {
   int rpn_pre_nms_top_n;
   int rpn_post_nms_top_n;
   float threshold;
@@ -62,7 +62,7 @@ struct MultiPyramidProposalV2Param : public dmlc::Parameter<MultiPyramidProposal
   nnvm::Tuple<float> feat_base_scales;
   bool output_score;
   bool iou_loss;
-  DMLC_DECLARE_PARAMETER(MultiPyramidProposalV2Param) {
+  DMLC_DECLARE_PARAMETER(MultiPyramidProposalParam) {
     float tmp[] = {0, 0, 0, 0, 0};
     DMLC_DECLARE_FIELD(rpn_pre_nms_top_n).set_default(6000)
     .describe("Number of top scoring boxes to keep after applying NMS to RPN proposals");
@@ -94,10 +94,10 @@ struct MultiPyramidProposalV2Param : public dmlc::Parameter<MultiPyramidProposal
 };
 
 template<typename xpu>
-Operator *CreateOp(MultiPyramidProposalV2Param param, int dtype);
+Operator *CreateOp(MultiPyramidProposalParam param, int dtype);
 
 #if DMLC_USE_CXX11
-class MultiPyramidProposalV2Prop : public OperatorProperty {
+class MultiPyramidProposalProp : public OperatorProperty {
  public:
   void Init(const std::vector<std::pair<std::string, std::string> >& kwargs) override {
     param_.Init(kwargs);
@@ -146,13 +146,13 @@ class MultiPyramidProposalV2Prop : public OperatorProperty {
   }
 
   OperatorProperty* Copy() const override {
-    auto ptr = new MultiPyramidProposalV2Prop();
+    auto ptr = new MultiPyramidProposalProp();
     ptr->param_ = param_;
     return ptr;
   }
 
   std::string TypeString() const override {
-    return "_contrib_MultiPyramidProposalV2";
+    return "_contrib_MultiPyramidProposal";
   }
 
   std::vector<ResourceRequest> ForwardResource(
@@ -205,7 +205,7 @@ class MultiPyramidProposalV2Prop : public OperatorProperty {
 
 
  private:
-  MultiPyramidProposalV2Param param_;
+  MultiPyramidProposalParam param_;
 };  // class MultiProposalProp
 
 #endif  // DMLC_USE_CXX11
@@ -251,7 +251,7 @@ inline void _Transform(float scale,
 }
 template<typename DType>
 // out_anchors must have shape (n, 5), where n is ratios.size() * scales.size()
-inline void GenerateAnchorsV2(const std::vector<DType>& base_anchor,
+inline void GenerateAnchors(const std::vector<DType>& base_anchor,
                             const std::vector<float>& ratios,
                             const std::vector<float>& scales,
                             std::vector<DType> *out_anchors) {
@@ -262,18 +262,6 @@ inline void GenerateAnchorsV2(const std::vector<DType>& base_anchor,
   }
 }
 
-template<typename DType>
-// out_anchors must have shape (n, 5), where n is ratios.size() * scales.size()
-inline void GenerateAnchors(const std::vector<DType>& base_anchor,
-                            const nnvm::Tuple<float>& ratios,
-                            const nnvm::Tuple<float>& scales,
-                            std::vector<DType> *out_anchors) {
-  for (size_t j = 0; j < ratios.ndim(); ++j) {
-    for (size_t k = 0; k < scales.ndim(); ++k) {
-      _Transform(scales[k], ratios[j], base_anchor, out_anchors);
-    }
-  }
-}
 
 }  // namespace utils
 }  // namespace op

@@ -21,8 +21,8 @@
  * Copyright (c) 2015 by Contributors
  * Copyright (c) 2017 Microsoft
  * Licensed under The Apache-2.0 License [see LICENSE for details]
- * \file multi_pyramid_proposal_v2.cu
- * \brief MultiPyramidProposalV2 Operator
+ * \file multi_pyramid_proposal.cu
+ * \brief MultiPyramidProposal Operator
  * \author Shaoqing Ren, Xizhou Zhu, Jian Guo, Han Hu
 */
 #include <dmlc/logging.h>
@@ -43,7 +43,7 @@
 
 #include "../operator_common.h"
 #include "../mshadow_op.h"
-#include "./multi_pyramid_proposal_v2-inl.h"
+#include "./multi_pyramid_proposal-inl.h"
 
 #define DIVUP(m, n) ((m) / (n) + ((m) % (n) > 0))
 
@@ -56,7 +56,7 @@
 
 namespace mshadow {
 namespace cuda {
-namespace multi_pyramid_proposal_v2 {
+namespace multi_pyramid_proposal {
 
 // scores are (b, 2 * anchor, h, w)
 // workspace_proposals are (b, h * w * anchor, 5)
@@ -236,7 +236,7 @@ __global__ void FilterBoxKernel(const int count,
 // reorder proposals obtained on different stides of feature maps
 // src (batch_size * acc_count * 5); dst (batch_size * acc_count * 5)
 template<typename DType>
-__global__ void ReorganizedProposalsV2Kernel(const int count,
+__global__ void ReorganizedProposalsKernel(const int count,
                                 const int batch_ind,
                                 const int batch_size,
                                 const int start_cnt,
@@ -517,7 +517,7 @@ __global__ void PrepareOutput(const int count,
     }
   }
 }
-}  // namespace multi_pyramid_proposal_v2
+}  // namespace multi_pyramid_proposal
 }  // namespace cuda
 }  // namespace mshadow
 
@@ -525,9 +525,9 @@ namespace mxnet {
 namespace op {
 
 template<typename xpu, typename DType>
-class MultiPyramidProposalV2GPUOp : public Operator{
+class MultiPyramidProposalGPUOp : public Operator{
  public:
-  explicit MultiPyramidProposalV2GPUOp(MultiPyramidProposalV2Param param) {
+  explicit MultiPyramidProposalGPUOp(MultiPyramidProposalParam param) {
     this->param_ = param;
   }
 
@@ -539,7 +539,7 @@ class MultiPyramidProposalV2GPUOp : public Operator{
     using namespace mshadow;
     using namespace mshadow::expr;
     using namespace mshadow::cuda;
-    using namespace mshadow::cuda::multi_pyramid_proposal_v2;
+    using namespace mshadow::cuda::multi_pyramid_proposal;
     CHECK_EQ(in_data.size(), param_.feature_stride.ndim() * 2 + 1);
     CHECK_EQ(out_data.size(), 2);
     CHECK_GT(req.size(), 1);
@@ -607,7 +607,7 @@ class MultiPyramidProposalV2GPUOp : public Operator{
         cscales.push_back(base_scale * param_.scales[i_s]);
       }
 
-      utils::GenerateAnchorsV2(base_anchor,
+      utils::GenerateAnchors(base_anchor,
                            cratios,
                            cscales,
                            &anchors);
@@ -794,7 +794,7 @@ class MultiPyramidProposalV2GPUOp : public Operator{
         std::string name = "ReorganizeProposals";
         name += std::to_string(sind);
         CheckLaunchParam(dimGrid, dimBlock, name.c_str());
-        ReorganizedProposalsV2Kernel << <dimGrid, dimBlock >> >(
+        ReorganizedProposalsKernel << <dimGrid, dimBlock >> >(
               acc_end - acc_start, b, num_images, 
               acc_start, acc_end, 
               workspace_proposals.dptr_, 
@@ -881,14 +881,14 @@ class MultiPyramidProposalV2GPUOp : public Operator{
   }
 
  private:
-  MultiPyramidProposalV2Param param_;
+  MultiPyramidProposalParam param_;
 };  // class MultiProposalGPUOp
 
 template<>
-Operator* CreateOp<gpu>(MultiPyramidProposalV2Param param, int dtype) {
+Operator* CreateOp<gpu>(MultiPyramidProposalParam param, int dtype) {
   Operator *op = NULL;
   MSHADOW_REAL_TYPE_SWITCH(dtype, DType, {
-    op = new MultiPyramidProposalV2GPUOp<gpu, DType>(param);
+    op = new MultiPyramidProposalGPUOp<gpu, DType>(param);
   });
   return op;
 }

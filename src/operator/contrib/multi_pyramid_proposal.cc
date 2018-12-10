@@ -25,16 +25,16 @@
  * \author Xizhou Zhu, Han Hu
 */
 
-#include "./multi_pyramid_proposal_v2-inl.h"
+#include "./multi_pyramid_proposal-inl.h"
 
 
 namespace mxnet {
 namespace op {
 
 template<typename xpu, typename DType>
-class MultiPyramidProposalV2Op : public Operator{
+class MultiPyramidProposalOp : public Operator{
  public:
-  explicit MultiPyramidProposalV2Op(MultiPyramidProposalV2Param param) {
+  explicit MultiPyramidProposalOp(MultiPyramidProposalParam param) {
     this->param_ = param;
   }
 
@@ -57,20 +57,20 @@ class MultiPyramidProposalV2Op : public Operator{
   }
 
  private:
-  MultiPyramidProposalV2Param param_;
+  MultiPyramidProposalParam param_;
 };  // class MultiProposalOp
 
 template<>
-Operator *CreateOp<cpu>(MultiPyramidProposalV2Param param, int dtype) {
+Operator *CreateOp<cpu>(MultiPyramidProposalParam param, int dtype) {
   Operator *op = NULL;
   MSHADOW_REAL_TYPE_SWITCH(dtype, DType, {
-    op = new MultiPyramidProposalV2Op<cpu, DType>(param);
+    op = new MultiPyramidProposalOp<cpu, DType>(param);
   });
   return op;
 }
 
 
-Operator* MultiPyramidProposalV2Prop::CreateOperatorEx(Context ctx,
+Operator* MultiPyramidProposalProp::CreateOperatorEx(Context ctx,
                                                   std::vector<TShape> *in_shape,
                                                   std::vector<int> *in_type) const {
   std::vector<TShape> out_shape, aux_shape;
@@ -82,12 +82,12 @@ Operator* MultiPyramidProposalV2Prop::CreateOperatorEx(Context ctx,
 
 
 
-DMLC_REGISTER_PARAMETER(MultiPyramidProposalV2Param);
+DMLC_REGISTER_PARAMETER(MultiPyramidProposalParam);
 
-MXNET_REGISTER_OP_PROPERTY(_contrib_MultiPyramidProposalV2, MultiPyramidProposalV2Prop)
+MXNET_REGISTER_OP_PROPERTY(_contrib_MultiPyramidProposal, MultiPyramidProposalProp)
 .describe("Generate pyramid region proposals via FPN RPN")
 .add_argument("data", "NDArray-or-Symbol []", "Score and bbox deltas on feature maps, in the order of im_info, s0, b0, s1, b1, s2, b2, ...")
-.add_arguments(MultiPyramidProposalV2Param::__FIELDS__());
+.add_arguments(MultiPyramidProposalParam::__FIELDS__());
 
 }  // namespace op
 }  // namespace mxnet

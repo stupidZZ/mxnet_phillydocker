@@ -24,7 +24,7 @@
  * \brief
  * \author Yi Li, Guodong Zhang, Jifeng Dai
 */
-#include "./deformable_psroi_pooling_v2-inl.h"
+#include "./deformable_psroi_pooling-inl.h"
 #include <mshadow/tensor.h>
 #include <mshadow/cuda/reduce.cuh>
 #include <algorithm>
@@ -46,7 +46,7 @@ for (int i = blockIdx.x * blockDim.x + threadIdx.x; \
 namespace mshadow {
 namespace cuda {
   template <typename DType>
-  __device__ DType bilinear_interp_v2(
+  __device__ DType bilinear_interp(
     const DType* data,
     const DType x,
     const DType y,
@@ -68,7 +68,7 @@ namespace cuda {
   }
 
   template <typename DType>
-  __global__ void DeformablePSROIPoolv2ForwardKernel(
+  __global__ void DeformablePSROIPoolForwardKernel(
     const int count,
     const DType** stage_bottom_data,
     const DType* stage_spatial_scale,
@@ -156,7 +156,7 @@ namespace cuda {
           w = min(max(w, 0.), width - 1.);
           h = min(max(h, 0.), height - 1.);
           int c = (ctop*group_size + gh)*group_size + gw;
-          DType val = bilinear_interp_v2(offset_bottom_data + c*height*width, w, h, width, height);
+          DType val = bilinear_interp(offset_bottom_data + c*height*width, w, h, width, height);
           sum += val;
           count++;
         }
@@ -167,7 +167,7 @@ namespace cuda {
   }
 
   template<typename DType>
-  inline void DeformablePSROIPoolv2Forward(const Tensor<gpu, 4, DType> &out,
+  inline void DeformablePSROIPoolForward(const Tensor<gpu, 4, DType> &out,
     const std::vector<Tensor<gpu, 4, DType>> &datas,
     const Tensor<gpu, 2, DType> &bbox,
     const Tensor<gpu, 4, DType> &trans,
@@ -228,7 +228,7 @@ namespace cuda {
     
     
     cudaStream_t stream = Stream<gpu>::GetStream(out.stream_);
-    DeformablePSROIPoolv2ForwardKernel<DType><<<mxnet::op::mxnet_op::cuda_get_num_blocks(count), kBaseThreadNum, 0, stream>>>(
+    DeformablePSROIPoolForwardKernel<DType><<<mxnet::op::mxnet_op::cuda_get_num_blocks(count), kBaseThreadNum, 0, stream>>>(
       count, stage_bottom_data, stage_spatial_scale, channels, stage_height, stage_width, pooled_height, pooled_width,
       bottom_rois, bottom_trans, no_trans, trans_std, sample_per_part, output_dim,
       group_size, part_size, num_classes, channels_each_class, top_data, top_count_data);
@@ -242,7 +242,7 @@ namespace cuda {
 
 
   template <typename DType>
-  __global__ void DeformablePSROIPoolv2BackwardAccKernel(
+  __global__ void DeformablePSROIPoolBackwardAccKernel(
     const int count,
     const DType* top_diff,
     const DType* top_count,
@@ -380,7 +380,7 @@ namespace cuda {
 
 
   template<typename DType>
-  inline void DeformablePSROIPoolv2BackwardAcc(const std::vector<Tensor<gpu, 4, DType>> &in_grads,
+  inline void DeformablePSROIPoolBackwardAcc(const std::vector<Tensor<gpu, 4, DType>> &in_grads,
     const Tensor<gpu, 4, DType> &trans_grad,
     const Tensor<gpu, 4, DType> &out_grad,
     const std::vector<Tensor<gpu, 4, DType>> &datas,
@@ -453,7 +453,7 @@ namespace cuda {
                                 cudaMemcpyHostToDevice));
     
     cudaStream_t stream = Stream<gpu>::GetStream(in_grads[0].stream_);
-    DeformablePSROIPoolv2BackwardAccKernel<DType> << <mxnet::op::mxnet_op::cuda_get_num_blocks(count),
+    DeformablePSROIPoolBackwardAccKernel<DType> << <mxnet::op::mxnet_op::cuda_get_num_blocks(count),
       kBaseThreadNum, 0, stream >> >(
       count, top_diff, top_count_data, num_rois, stage_spatial_scale, channels, stage_height, stage_width,
       pooled_height, pooled_width, output_dim, stage_bottom_data_diff, bottom_trans_diff,
@@ -471,7 +471,7 @@ namespace cuda {
 }  // namespace cuda
 
   template<typename DType>
-  inline void DeformablePSROIPoolv2Forward(const Tensor<gpu, 4, DType> &out,
+  inline void DeformablePSROIPoolForward(const Tensor<gpu, 4, DType> &out,
     const std::vector<Tensor<gpu, 4, DType>> &datas,
     const Tensor<gpu, 2, DType> &bbox,
     const Tensor<gpu, 4, DType> &trans,
@@ -484,12 +484,12 @@ namespace cuda {
     const int part_size,
     const int sample_per_part,
     const float trans_std) {
-    cuda::DeformablePSROIPoolv2Forward(out, datas, bbox, trans, top_count, no_trans, spatial_scale,
+    cuda::DeformablePSROIPoolForward(out, datas, bbox, trans, top_count, no_trans, spatial_scale,
       output_dim, group_size, pooled_size, part_size, sample_per_part, trans_std);
   }
 
   template<typename DType>
-  inline void DeformablePSROIPoolv2BackwardAcc(const std::vector<Tensor<gpu, 4, DType>> &in_grads,
+  inline void DeformablePSROIPoolBackwardAcc(const std::vector<Tensor<gpu, 4, DType>> &in_grads,
     const Tensor<gpu, 4, DType> &trans_grad,
     const Tensor<gpu, 4, DType> &out_grad,
     const std::vector<Tensor<gpu, 4, DType>> &datas,
@@ -504,7 +504,7 @@ namespace cuda {
     const int part_size,
     const int sample_per_part,
     const float trans_std) {
-    cuda::DeformablePSROIPoolv2BackwardAcc(in_grads, trans_grad, out_grad, datas, bbox, trans,
+    cuda::DeformablePSROIPoolBackwardAcc(in_grads, trans_grad, out_grad, datas, bbox, trans,
       top_count, no_trans, spatial_scale, output_dim, group_size, pooled_size, part_size,
       sample_per_part, trans_std);
   }
@@ -516,10 +516,10 @@ namespace mxnet {
 namespace op {
 
   template<>
-  Operator* CreateOp<gpu>(DeformablePSROIPoolingv2Param param, int dtype) {
+  Operator* CreateOp<gpu>(DeformablePSROIPoolingParam param, int dtype) {
     Operator* op = nullptr;
     MSHADOW_REAL_TYPE_SWITCH(dtype, DType, {
-      op = new DeformablePSROIPoolingv2Op<gpu, DType>(param);
+      op = new DeformablePSROIPoolingOp<gpu, DType>(param);
     });
     return op;
   }
