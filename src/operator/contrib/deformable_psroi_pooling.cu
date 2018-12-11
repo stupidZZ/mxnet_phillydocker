@@ -70,10 +70,10 @@ namespace cuda {
   template <typename DType>
   __global__ void DeformablePSROIPoolForwardKernel(
     const int count,
-    const DType* bottom_data,
-    const DType spatial_scale,
+    const DType** stage_bottom_data,
+    const DType* stage_spatial_scale,
     const int channels,
-    const int height, const int width,
+    const int* stage_height, const int* stage_width,
     const int pooled_height, const int pooled_width,
     const DType* bottom_rois, const DType* bottom_trans,
     const bool no_trans,
@@ -94,12 +94,18 @@ namespace cuda {
       int n = index / pooled_width / pooled_height / output_dim;
 
       // [start, end) interval for spatial sampling
-      const DType* offset_bottom_rois = bottom_rois + n * 5;
-      int roi_batch_ind = offset_bottom_rois[0];
-      DType roi_start_w = static_cast<DType>(round(offset_bottom_rois[1])) * spatial_scale - 0.5;
-      DType roi_start_h = static_cast<DType>(round(offset_bottom_rois[2])) * spatial_scale - 0.5;
-      DType roi_end_w = static_cast<DType>(round(offset_bottom_rois[3]) + 1.) * spatial_scale - 0.5;
-      DType roi_end_h = static_cast<DType>(round(offset_bottom_rois[4]) + 1.) * spatial_scale - 0.5;
+      const DType* offset_bottom_rois = bottom_rois + n * 6;
+      int roi_stage_ind = offset_bottom_rois[0];
+      const DType* bottom_data = stage_bottom_data[roi_stage_ind];
+      const int height = stage_height[roi_stage_ind];
+      const int width = stage_width[roi_stage_ind];
+      const DType spatial_scale = stage_spatial_scale[roi_stage_ind];
+      
+      int roi_batch_ind = offset_bottom_rois[1];
+      DType roi_start_w = static_cast<DType>(round(offset_bottom_rois[2])) * spatial_scale - 0.5;
+      DType roi_start_h = static_cast<DType>(round(offset_bottom_rois[3])) * spatial_scale - 0.5;
+      DType roi_end_w = static_cast<DType>(round(offset_bottom_rois[4]) + 1.) * spatial_scale - 0.5;
+      DType roi_end_h = static_cast<DType>(round(offset_bottom_rois[5]) + 1.) * spatial_scale - 0.5;
 
       // Force too small ROIs to be 1x1
       DType roi_width = max(roi_end_w - roi_start_w, 0.1);  // avoid 0
@@ -162,12 +168,12 @@ namespace cuda {
 
   template<typename DType>
   inline void DeformablePSROIPoolForward(const Tensor<gpu, 4, DType> &out,
-    const Tensor<gpu, 4, DType> &data,
+    const std::vector<Tensor<gpu, 4, DType>> &datas,
     const Tensor<gpu, 2, DType> &bbox,
     const Tensor<gpu, 4, DType> &trans,
     const Tensor<gpu, 4, DType> &top_count,
     const bool no_trans,
-    const float spatial_scale,
+    const nnvm::Tuple<float> spatial_scale,
     const int output_dim,
     const int group_size,
     const int pooled_size,
@@ -175,27 +181,63 @@ namespace cuda {
     const int sample_per_part,
     const float trans_std) {
     // LOG(INFO) << "DeformablePSROIPoolForward";
-    const DType *bottom_data = data.dptr_;
+
+    std::vector<const DType*> _stage_bottom_data;
+    for (int i = 0; i < datas.size(); i++)
+        _stage_bottom_data.push_back(datas[i].dptr_);
+    const DType **stage_bottom_data;
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMalloc(&stage_bottom_data, sizeof(const DType*) * _stage_bottom_data.size()));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMemcpy(stage_bottom_data, &_stage_bottom_data[0], sizeof(const DType*) * _stage_bottom_data.size(),
+                                cudaMemcpyHostToDevice));
+    
     const DType *bottom_rois = bbox.dptr_;
     const DType *bottom_trans = no_trans ? NULL : trans.dptr_;
     DType *top_data = out.dptr_;
     DType *top_count_data = top_count.dptr_;
     const int count = out.shape_.Size();
-    const int channels = data.size(1);
-    const int height = data.size(2);
-    const int width = data.size(3);
+    const int channels = datas[0].size(1);
+    
+    std::vector<int> _stage_height;
+    for (int i = 0; i < datas.size(); i++)
+        _stage_height.push_back(datas[i].size(2));
+    int *stage_height;
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMalloc(&stage_height, sizeof(int) * _stage_height.size()));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMemcpy(stage_height, &_stage_height[0], sizeof(int) * _stage_height.size(),
+                                cudaMemcpyHostToDevice));
+
+    std::vector<int> _stage_width;
+    for (int i = 0; i < datas.size(); i++)
+        _stage_width.push_back(datas[i].size(3));
+    int *stage_width;
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMalloc(&stage_width, sizeof(int) * _stage_width.size()));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMemcpy(stage_width, &_stage_width[0], sizeof(int) * _stage_width.size(),
+                                cudaMemcpyHostToDevice));
+                                
     const int pooled_height = pooled_size;
     const int pooled_width = pooled_size;
     const int num_classes = no_trans ? 1 : trans.size(1) / 2;
     const int channels_each_class = no_trans ? output_dim : output_dim / num_classes;
 
+    std::vector<DType> _stage_spatial_scale;
+    for (int i = 0; i < spatial_scale.ndim(); i++)
+        _stage_spatial_scale.push_back(spatial_scale[i]);
+    DType *stage_spatial_scale;
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMalloc(&stage_spatial_scale, sizeof(DType) * _stage_spatial_scale.size()));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMemcpy(stage_spatial_scale, &_stage_spatial_scale[0], sizeof(DType) * _stage_spatial_scale.size(),
+                                cudaMemcpyHostToDevice));
+    
+    
     cudaStream_t stream = Stream<gpu>::GetStream(out.stream_);
-    DeformablePSROIPoolForwardKernel<DType> << <mxnet::op::mxnet_op::cuda_get_num_blocks(count),
-      kBaseThreadNum, 0, stream >> >(
-      count, bottom_data, spatial_scale, channels, height, width, pooled_height, pooled_width,
+    DeformablePSROIPoolForwardKernel<DType><<<mxnet::op::mxnet_op::cuda_get_num_blocks(count), kBaseThreadNum, 0, stream>>>(
+      count, stage_bottom_data, stage_spatial_scale, channels, stage_height, stage_width, pooled_height, pooled_width,
       bottom_rois, bottom_trans, no_trans, trans_std, sample_per_part, output_dim,
       group_size, part_size, num_classes, channels_each_class, top_data, top_count_data);
     DeformablePSROIPOOLING_CUDA_CHECK(cudaPeekAtLastError());
+    
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaFree(stage_bottom_data));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaFree(stage_height));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaFree(stage_width));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaFree(stage_spatial_scale));
   }
 
 
@@ -205,13 +247,13 @@ namespace cuda {
     const DType* top_diff,
     const DType* top_count,
     const int num_rois,
-    const DType spatial_scale,
+    const DType* stage_spatial_scale,
     const int channels,
-    const int height, const int width,
+    const int* stage_height, const int* stage_width,
     const int pooled_height, const int pooled_width,
     const int output_dim,
-    DType* bottom_data_diff, DType* bottom_trans_diff,
-    const DType* bottom_data,
+    DType** stage_bottom_data_diff, DType* bottom_trans_diff,
+    const DType** stage_bottom_data,
     const DType* bottom_rois,
     const DType* bottom_trans,
     const bool no_trans,
@@ -229,12 +271,19 @@ namespace cuda {
       int n = index / pooled_width / pooled_height / output_dim;
 
       // [start, end) interval for spatial sampling
-      const DType* offset_bottom_rois = bottom_rois + n * 5;
-      int roi_batch_ind = offset_bottom_rois[0];
-      DType roi_start_w = static_cast<DType>(round(offset_bottom_rois[1])) * spatial_scale - 0.5;
-      DType roi_start_h = static_cast<DType>(round(offset_bottom_rois[2])) * spatial_scale - 0.5;
-      DType roi_end_w = static_cast<DType>(round(offset_bottom_rois[3]) + 1.) * spatial_scale - 0.5;
-      DType roi_end_h = static_cast<DType>(round(offset_bottom_rois[4]) + 1.) * spatial_scale - 0.5;
+      const DType* offset_bottom_rois = bottom_rois + n * 6;
+      int roi_stage_ind = offset_bottom_rois[0];
+      DType* bottom_data_diff = stage_bottom_data_diff[roi_stage_ind];
+      const DType* bottom_data = stage_bottom_data[roi_stage_ind];
+      const int height = stage_height[roi_stage_ind];
+      const int width = stage_width[roi_stage_ind];
+      const DType spatial_scale = stage_spatial_scale[roi_stage_ind];
+      
+      int roi_batch_ind = offset_bottom_rois[1];
+      DType roi_start_w = static_cast<DType>(round(offset_bottom_rois[2])) * spatial_scale - 0.5;
+      DType roi_start_h = static_cast<DType>(round(offset_bottom_rois[3])) * spatial_scale - 0.5;
+      DType roi_end_w = static_cast<DType>(round(offset_bottom_rois[4]) + 1.) * spatial_scale - 0.5;
+      DType roi_end_h = static_cast<DType>(round(offset_bottom_rois[5]) + 1.) * spatial_scale - 0.5;
 
       // Force too small ROIs to be 1x1
       DType roi_width = max(roi_end_w - roi_start_w, 0.1);  // avoid 0
@@ -331,15 +380,15 @@ namespace cuda {
 
 
   template<typename DType>
-  inline void DeformablePSROIPoolBackwardAcc(const Tensor<gpu, 4, DType> &in_grad,
+  inline void DeformablePSROIPoolBackwardAcc(const std::vector<Tensor<gpu, 4, DType>> &in_grads,
     const Tensor<gpu, 4, DType> &trans_grad,
     const Tensor<gpu, 4, DType> &out_grad,
-    const Tensor<gpu, 4, DType> &data,
+    const std::vector<Tensor<gpu, 4, DType>> &datas,
     const Tensor<gpu, 2, DType> &bbox,
     const Tensor<gpu, 4, DType> &trans,
     const Tensor<gpu, 4, DType> &top_count,
     const bool no_trans,
-    const float spatial_scale,
+    const nnvm::Tuple<float> spatial_scale,
     const int output_dim,
     const int group_size,
     const int pooled_size,
@@ -348,69 +397,114 @@ namespace cuda {
     const float trans_std) {
     // LOG(INFO) << "DeformablePSROIPoolBackward";
     const DType *top_diff = out_grad.dptr_;
-    const DType *bottom_data = data.dptr_;
+    
+    std::vector<const DType*> _stage_bottom_data;
+    for (int i = 0; i < datas.size(); i++)
+        _stage_bottom_data.push_back(datas[i].dptr_);
+    const DType **stage_bottom_data;
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMalloc(&stage_bottom_data, sizeof(const DType*) * _stage_bottom_data.size()));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMemcpy(stage_bottom_data, &_stage_bottom_data[0], sizeof(const DType*) * _stage_bottom_data.size(),
+                                cudaMemcpyHostToDevice));
+    
     const DType *bottom_rois = bbox.dptr_;
     const DType *bottom_trans = no_trans ? NULL : trans.dptr_;
-    DType *bottom_data_diff = in_grad.dptr_;
+    
+    std::vector<DType*> _stage_bottom_data_diff;
+    for (int i = 0; i < in_grads.size(); i++)
+        _stage_bottom_data_diff.push_back(in_grads[i].dptr_);
+    DType **stage_bottom_data_diff;
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMalloc(&stage_bottom_data_diff, sizeof(DType*) * _stage_bottom_data_diff.size()));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMemcpy(stage_bottom_data_diff, &_stage_bottom_data_diff[0], sizeof(DType*) * _stage_bottom_data_diff.size(),
+                                cudaMemcpyHostToDevice));
+
     DType *bottom_trans_diff = no_trans ? NULL : trans_grad.dptr_;
     const DType *top_count_data = top_count.dptr_;
     const int count = out_grad.shape_.Size();
     const int num_rois = bbox.size(0);
-    const int channels = in_grad.size(1);
-    const int height = in_grad.size(2);
-    const int width = in_grad.size(3);
+    const int channels = in_grads[0].size(1);
+    
+    std::vector<int> _stage_height;
+    for (int i = 0; i < in_grads.size(); i++)
+        _stage_height.push_back(in_grads[i].size(2));
+    int *stage_height;
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMalloc(&stage_height, sizeof(int) * _stage_height.size()));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMemcpy(stage_height, &_stage_height[0], sizeof(int) * _stage_height.size(),
+                                cudaMemcpyHostToDevice));
+
+    std::vector<int> _stage_width;
+    for (int i = 0; i < in_grads.size(); i++)
+        _stage_width.push_back(in_grads[i].size(3));
+    int *stage_width;
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMalloc(&stage_width, sizeof(int) * _stage_width.size()));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMemcpy(stage_width, &_stage_width[0], sizeof(int) * _stage_width.size(),
+                                cudaMemcpyHostToDevice));
+                                
     const int pooled_height = pooled_size;
     const int pooled_width = pooled_size;
     const int num_classes = no_trans ? 1 : trans_grad.size(1) / 2;
     const int channels_each_class = no_trans ? output_dim : output_dim / num_classes;
 
-    cudaStream_t stream = Stream<gpu>::GetStream(in_grad.stream_);
+    std::vector<DType> _stage_spatial_scale;
+    for (int i = 0; i < spatial_scale.ndim(); i++)
+        _stage_spatial_scale.push_back(spatial_scale[i]);
+    DType *stage_spatial_scale;
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMalloc(&stage_spatial_scale, sizeof(DType) * _stage_spatial_scale.size()));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaMemcpy(stage_spatial_scale, &_stage_spatial_scale[0], sizeof(DType) * _stage_spatial_scale.size(),
+                                cudaMemcpyHostToDevice));
+    
+    cudaStream_t stream = Stream<gpu>::GetStream(in_grads[0].stream_);
     DeformablePSROIPoolBackwardAccKernel<DType> << <mxnet::op::mxnet_op::cuda_get_num_blocks(count),
       kBaseThreadNum, 0, stream >> >(
-      count, top_diff, top_count_data, num_rois, spatial_scale, channels, height, width,
-      pooled_height, pooled_width, output_dim, bottom_data_diff, bottom_trans_diff,
-      bottom_data, bottom_rois, bottom_trans, no_trans, trans_std, sample_per_part,
+      count, top_diff, top_count_data, num_rois, stage_spatial_scale, channels, stage_height, stage_width,
+      pooled_height, pooled_width, output_dim, stage_bottom_data_diff, bottom_trans_diff,
+      stage_bottom_data, bottom_rois, bottom_trans, no_trans, trans_std, sample_per_part,
       group_size, part_size, num_classes, channels_each_class);
     DeformablePSROIPOOLING_CUDA_CHECK(cudaPeekAtLastError());
+    
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaFree(stage_bottom_data));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaFree(stage_bottom_data_diff));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaFree(stage_height));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaFree(stage_width));
+    DeformablePSROIPOOLING_CUDA_CHECK(cudaFree(stage_spatial_scale));
   }
 
 }  // namespace cuda
 
   template<typename DType>
   inline void DeformablePSROIPoolForward(const Tensor<gpu, 4, DType> &out,
-    const Tensor<gpu, 4, DType> &data,
+    const std::vector<Tensor<gpu, 4, DType>> &datas,
     const Tensor<gpu, 2, DType> &bbox,
     const Tensor<gpu, 4, DType> &trans,
     const Tensor<gpu, 4, DType> &top_count,
     const bool no_trans,
-    const float spatial_scale,
+    const nnvm::Tuple<float> spatial_scale,
     const int output_dim,
     const int group_size,
     const int pooled_size,
     const int part_size,
     const int sample_per_part,
     const float trans_std) {
-    cuda::DeformablePSROIPoolForward(out, data, bbox, trans, top_count, no_trans, spatial_scale,
+    cuda::DeformablePSROIPoolForward(out, datas, bbox, trans, top_count, no_trans, spatial_scale,
       output_dim, group_size, pooled_size, part_size, sample_per_part, trans_std);
   }
 
   template<typename DType>
-  inline void DeformablePSROIPoolBackwardAcc(const Tensor<gpu, 4, DType> &in_grad,
+  inline void DeformablePSROIPoolBackwardAcc(const std::vector<Tensor<gpu, 4, DType>> &in_grads,
     const Tensor<gpu, 4, DType> &trans_grad,
     const Tensor<gpu, 4, DType> &out_grad,
-    const Tensor<gpu, 4, DType> &data,
+    const std::vector<Tensor<gpu, 4, DType>> &datas,
     const Tensor<gpu, 2, DType> &bbox,
     const Tensor<gpu, 4, DType> &trans,
     const Tensor<gpu, 4, DType> &top_count,
     const bool no_trans,
-    const float spatial_scale,
+    const nnvm::Tuple<float> spatial_scale,
     const int output_dim,
     const int group_size,
     const int pooled_size,
     const int part_size,
     const int sample_per_part,
     const float trans_std) {
-    cuda::DeformablePSROIPoolBackwardAcc(in_grad, trans_grad, out_grad, data, bbox, trans,
+    cuda::DeformablePSROIPoolBackwardAcc(in_grads, trans_grad, out_grad, datas, bbox, trans,
       top_count, no_trans, spatial_scale, output_dim, group_size, pooled_size, part_size,
       sample_per_part, trans_std);
   }
