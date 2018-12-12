@@ -140,6 +140,8 @@ inline void ImageRecordIOParser2<DType>::Init(
 #if MXNET_USE_OPENCV
   // initialize parameter
   // init image rec param
+
+  cache_index = 0;
   param_.InitAllowUnknown(kwargs);
   record_param_.InitAllowUnknown(kwargs);
   batch_param_.InitAllowUnknown(kwargs);
@@ -785,8 +787,7 @@ inline unsigned ImageRecordIOParser2<DType>::ParseChunk(DType* data_dptr, real_t
           }
         }
       }
-      if (!reader_has_data) 
-      {
+      if (!reader_has_data) {
           break;
       }
       // Opencv decode and augments
@@ -819,7 +820,7 @@ inline unsigned ImageRecordIOParser2<DType>::ParseChunk(DType* data_dptr, real_t
         LOG(FATAL) << "Invalid output shape " << param_.data_shape;
       }
       const int n_channels = res.channels();
-      /*      // load label before augmentations
+            // load label before augmentations
       std::vector<float> label_buf;
       if (label_map_ != nullptr) {
         label_buf = label_map_->FindCopy(rec.image_index());
@@ -834,10 +835,9 @@ inline unsigned ImageRecordIOParser2<DType>::ParseChunk(DType* data_dptr, real_t
              "or the rec file is packed with multi dimensional label";
         label_buf.assign(&rec.header.label, &rec.header.label + 1);
       }
-      */
 
       for (auto& aug : augmenters_[tid]) {
-        res = aug->Process(res, nullptr, prnds_[tid].get());
+        res = aug->Process(res, &label_buf, prnds_[tid].get());
       }
       mshadow::Tensor<cpu, 3, DType> data;
       if (idx < batch_param_.batch_size) {
@@ -882,6 +882,9 @@ inline unsigned ImageRecordIOParser2<DType>::ParseChunk(DType* data_dptr, real_t
         label = out_tmp.label().Back();
       }
 
+      mshadow::Copy(label, mshadow::Tensor<cpu, 1>(dmlc::BeginPtr(label_buf),
+              mshadow::Shape1(label_buf.size())));
+      /*
       if (label_map_ != nullptr) {
         mshadow::Copy(label, label_map_->Find(rec.image_index()));
       } else if (rec.label != NULL) {
@@ -896,6 +899,7 @@ inline unsigned ImageRecordIOParser2<DType>::ParseChunk(DType* data_dptr, real_t
              "or the rec file is packed with multi dimensional label";
         label[0] = rec.header.label;
       }
+      */
       res.release();
     }
   }
